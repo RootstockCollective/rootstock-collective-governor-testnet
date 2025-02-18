@@ -1,0 +1,8 @@
+{
+  "rootstock-testnet": {
+    "GovernorRootstockCollective": {
+      "address": "0x91a8E4a070b4BA4BF2E2a51CB42BDEdf8fFb9B5a",
+      "startBlock": 5582961
+    }
+  }
+}
