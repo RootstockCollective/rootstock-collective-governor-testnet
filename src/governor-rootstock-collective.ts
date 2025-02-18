@@ -30,9 +30,11 @@ import {
   VoteCast,
   VoteCastWithParams,
   VotingDelaySet,
-  VotingPeriodSet
+  VotingPeriodSet,
+  Proposal,
+  Vote
 } from "../generated/schema"
-import { Bytes } from "@graphprotocol/graph-ts"
+import { Bytes, BigInt } from "@graphprotocol/graph-ts"
 
 export function handleEIP712DomainChanged(
   event: EIP712DomainChangedEvent
@@ -88,6 +90,13 @@ export function handleProposalCanceled(event: ProposalCanceledEvent): void {
   entity.transactionHash = event.transaction.hash
 
   entity.save()
+
+  // Add state update
+  let proposal = Proposal.load(event.params.proposalId.toString())
+  if (proposal) {
+    proposal.state = "Canceled"
+    proposal.save()
+  }
 }
 
 export function handleProposalCreated(event: ProposalCreatedEvent): void {
@@ -109,6 +118,24 @@ export function handleProposalCreated(event: ProposalCreatedEvent): void {
   entity.transactionHash = event.transaction.hash
 
   entity.save()
+
+  // Add new code for Proposal entity
+  let proposal = new Proposal(event.params.proposalId.toString())
+  proposal.proposalId = event.params.proposalId
+  proposal.proposer = event.params.proposer
+  proposal.targets = changetype<Bytes[]>(event.params.targets)
+  proposal.values = event.params.values
+  proposal.signatures = event.params.signatures
+  proposal.calldatas = event.params.calldatas
+  proposal.voteStart = event.params.voteStart
+  proposal.voteEnd = event.params.voteEnd
+  proposal.description = event.params.description
+  proposal.state = "Pending"
+  proposal.createdAt = event.block.timestamp
+  proposal.forVotes = BigInt.fromI32(0)
+  proposal.againstVotes = BigInt.fromI32(0)
+  proposal.abstainVotes = BigInt.fromI32(0)
+  proposal.save()
 }
 
 export function handleProposalExecuted(event: ProposalExecutedEvent): void {
@@ -122,6 +149,13 @@ export function handleProposalExecuted(event: ProposalExecutedEvent): void {
   entity.transactionHash = event.transaction.hash
 
   entity.save()
+
+  // Add state update
+  let proposal = Proposal.load(event.params.proposalId.toString())
+  if (proposal) {
+    proposal.state = "Executed"
+    proposal.save()
+  }
 }
 
 export function handleProposalQueued(event: ProposalQueuedEvent): void {
@@ -136,6 +170,13 @@ export function handleProposalQueued(event: ProposalQueuedEvent): void {
   entity.transactionHash = event.transaction.hash
 
   entity.save()
+
+  // Add state update
+  let proposal = Proposal.load(event.params.proposalId.toString())
+  if (proposal) {
+    proposal.state = "Queued"
+    proposal.save()
+  }
 }
 
 export function handleProposalThresholdSet(
@@ -212,6 +253,33 @@ export function handleVoteCast(event: VoteCastEvent): void {
   entity.transactionHash = event.transaction.hash
 
   entity.save()
+
+  // Add new code for Vote entity and update Proposal
+  let voteId = event.params.proposalId.toString()
+    .concat("-")
+    .concat(event.params.voter.toHexString())
+
+  let vote = new Vote(voteId)
+  vote.proposal = event.params.proposalId.toString()
+  vote.voter = event.params.voter
+  vote.support = event.params.support
+  vote.weight = event.params.weight
+  vote.reason = event.params.reason
+  vote.timestamp = event.block.timestamp
+  vote.save()
+
+  // Update proposal vote counts
+  let proposal = Proposal.load(event.params.proposalId.toString())
+  if (proposal) {
+    if (event.params.support == 0) {
+      proposal.againstVotes = proposal.againstVotes.plus(event.params.weight)
+    } else if (event.params.support == 1) {
+      proposal.forVotes = proposal.forVotes.plus(event.params.weight)
+    } else if (event.params.support == 2) {
+      proposal.abstainVotes = proposal.abstainVotes.plus(event.params.weight)
+    }
+    proposal.save()
+  }
 }
 
 export function handleVoteCastWithParams(event: VoteCastWithParamsEvent): void {

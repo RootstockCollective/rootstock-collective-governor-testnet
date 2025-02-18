@@ -141,3 +141,43 @@ type VotingPeriodSet @entity(immutable: true) {
   blockTimestamp: BigInt!
   transactionHash: Bytes!
 }
+
+type Proposal @entity {
+  id: ID!
+  proposalId: BigInt!
+  proposer: Bytes!
+  targets: [Bytes!]!
+  values: [BigInt!]!
+  signatures: [String!]!
+  calldatas: [Bytes!]!
+  voteStart: BigInt!
+  voteEnd: BigInt!
+  description: String!
+  state: ProposalState!
+  createdAt: BigInt!
+  votes: [Vote!]! @derivedFrom(field: "proposal")
+  forVotes: BigInt!
+  againstVotes: BigInt!
+  abstainVotes: BigInt!
+}
+
+enum ProposalState {
+  Pending
+  Active
+  Canceled
+  Defeated
+  Succeeded
+  Queued
+  Expired
+  Executed
+}
+
+type Vote @entity {
+  id: ID!
+  proposal: Proposal!
+  voter: Bytes!
+  support: Int!
+  weight: BigInt!
+  reason: String
+  timestamp: BigInt!
+}
