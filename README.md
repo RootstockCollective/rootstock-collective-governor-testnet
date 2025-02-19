@@ -272,7 +272,6 @@ Potential improvements:
 ## Resources
 
 - [The Graph Documentation](https://thegraph.com/docs/en/)
-- [Governor Contract Reference](https://docs.openzeppelin.com/contracts/4.x/api/governance)
 
 ## Testing
 
