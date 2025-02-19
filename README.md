@@ -320,7 +320,7 @@ Monitor votes:
 
 This subgraph is designed to work seamlessly with frontend applications. The entity structure allows for efficient querying of proposal states and vote tracking, making it ideal for governance dashboards and voting interfaces.
 
-For example, the voting modal we implemented can directly query the subgraph to display:
+For example, the latest proposal page and proposal we implemented can directly query the subgraph to display:
 - Current proposal status
 - Vote counts
 - User's voting history
