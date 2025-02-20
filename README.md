@@ -326,3 +326,86 @@ For example, the latest proposal page and proposal we implemented can directly q
 - Proposal details
 
 The schema is also extensible, allowing for future additions to track more governance metrics as the DAO evolves.
+
+### Example Typescript Implementation
+```typescript
+// Using node-fetch
+import fetch from 'node-fetch';
+
+const SUBGRAPH_URL = "https://api.thegraph.com/subgraphs/name/your-username/rootstock-collective-dao";
+
+async function fetchProposals() {
+  const query = `
+    {
+      proposals(first: 5, orderBy: createdAt, orderDirection: desc) {
+        id
+        proposalId
+        description
+        state
+        forVotes
+        againstVotes
+        abstainVotes
+        createdAt
+      }
+    }
+  `;
+
+  try {
+    const response = await fetch(SUBGRAPH_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ query })
+    });
+
+    const data = await response.json();
+    console.log('Proposals:', data.data.proposals);
+    return data.data.proposals;
+  } catch (error) {
+    console.error('Error fetching proposals:', error);
+  }
+}
+
+// Using graphql-request (recommended)
+import { request, gql } from 'graphql-request';
+
+async function getUserVotes(userAddress: string) {
+  const query = gql`
+    query GetUserVotes($voter: String!) {
+      votes(where: { voter: $voter }) {
+        proposal {
+          id
+          description
+        }
+        support
+        weight
+        timestamp
+      }
+    }
+  `;
+
+  const variables = {
+    voter: userAddress.toLowerCase()
+  };
+
+  try {
+    const data = await request(SUBGRAPH_URL, query, variables);
+    console.log('User votes:', data.votes);
+    return data.votes;
+  } catch (error) {
+    console.error('Error fetching user votes:', error);
+  }
+}
+
+// Usage example
+async function main() {
+  // Fetch recent proposals
+  const proposals = await fetchProposals();
+  
+  // Fetch specific user's votes
+  const userVotes = await getUserVotes('0x123...abc');
+}
+
+main();
+```
