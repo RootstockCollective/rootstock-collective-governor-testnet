@@ -132,7 +132,7 @@ graph build
 
 4. Deploy:
 ```bash
-graph deploy your-github-username/rootstock-collective-dao --product hosted-service
+graph deploy https://your-subgraph-service/ your-subgraph-slug
 ```
 
 ## Event Handling
