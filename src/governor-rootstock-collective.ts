@@ -13,7 +13,8 @@ import {
   VoteCast as VoteCastEvent,
   VoteCastWithParams as VoteCastWithParamsEvent,
   VotingDelaySet as VotingDelaySetEvent,
-  VotingPeriodSet as VotingPeriodSetEvent
+  VotingPeriodSet as VotingPeriodSetEvent,
+  GovernorRootstockCollective as GovernorContract
 } from "../generated/GovernorRootstockCollective/GovernorRootstockCollective"
 import {
   EIP712DomainChanged,
@@ -32,9 +33,11 @@ import {
   VotingDelaySet,
   VotingPeriodSet,
   Proposal,
-  Vote
+  Vote,
+  ActiveProposalTracker,
+  Counter
 } from "../generated/schema"
-import { Bytes, BigInt } from "@graphprotocol/graph-ts"
+import { BigInt, Address, ethereum, Bytes, store } from "@graphprotocol/graph-ts"
 
 export function handleEIP712DomainChanged(
   event: EIP712DomainChangedEvent
@@ -79,105 +82,6 @@ export function handleOwnershipTransferred(
   entity.save()
 }
 
-export function handleProposalCanceled(event: ProposalCanceledEvent): void {
-  let entity = new ProposalCanceled(
-    event.transaction.hash.concatI32(event.logIndex.toI32())
-  )
-  entity.proposalId = event.params.proposalId
-
-  entity.blockNumber = event.block.number
-  entity.blockTimestamp = event.block.timestamp
-  entity.transactionHash = event.transaction.hash
-
-  entity.save()
-
-  // Add state update
-  let proposal = Proposal.load(event.params.proposalId.toString())
-  if (proposal) {
-    proposal.state = "Canceled"
-    proposal.save()
-  }
-}
-
-export function handleProposalCreated(event: ProposalCreatedEvent): void {
-  let entity = new ProposalCreated(
-    event.transaction.hash.concatI32(event.logIndex.toI32())
-  )
-  entity.proposalId = event.params.proposalId
-  entity.proposer = event.params.proposer
-  entity.targets = changetype<Bytes[]>(event.params.targets)
-  entity.values = event.params.values
-  entity.signatures = event.params.signatures
-  entity.calldatas = event.params.calldatas
-  entity.voteStart = event.params.voteStart
-  entity.voteEnd = event.params.voteEnd
-  entity.description = event.params.description
-
-  entity.blockNumber = event.block.number
-  entity.blockTimestamp = event.block.timestamp
-  entity.transactionHash = event.transaction.hash
-
-  entity.save()
-
-  // Add new code for Proposal entity
-  let proposal = new Proposal(event.params.proposalId.toString())
-  proposal.proposalId = event.params.proposalId
-  proposal.proposer = event.params.proposer
-  proposal.targets = changetype<Bytes[]>(event.params.targets)
-  proposal.values = event.params.values
-  proposal.signatures = event.params.signatures
-  proposal.calldatas = event.params.calldatas
-  proposal.voteStart = event.params.voteStart
-  proposal.voteEnd = event.params.voteEnd
-  proposal.description = event.params.description
-  proposal.state = "Pending"
-  proposal.createdAt = event.block.timestamp
-  proposal.forVotes = BigInt.fromI32(0)
-  proposal.againstVotes = BigInt.fromI32(0)
-  proposal.abstainVotes = BigInt.fromI32(0)
-  proposal.save()
-}
-
-export function handleProposalExecuted(event: ProposalExecutedEvent): void {
-  let entity = new ProposalExecuted(
-    event.transaction.hash.concatI32(event.logIndex.toI32())
-  )
-  entity.proposalId = event.params.proposalId
-
-  entity.blockNumber = event.block.number
-  entity.blockTimestamp = event.block.timestamp
-  entity.transactionHash = event.transaction.hash
-
-  entity.save()
-
-  // Add state update
-  let proposal = Proposal.load(event.params.proposalId.toString())
-  if (proposal) {
-    proposal.state = "Executed"
-    proposal.save()
-  }
-}
-
-export function handleProposalQueued(event: ProposalQueuedEvent): void {
-  let entity = new ProposalQueued(
-    event.transaction.hash.concatI32(event.logIndex.toI32())
-  )
-  entity.proposalId = event.params.proposalId
-  entity.etaSeconds = event.params.etaSeconds
-
-  entity.blockNumber = event.block.number
-  entity.blockTimestamp = event.block.timestamp
-  entity.transactionHash = event.transaction.hash
-
-  entity.save()
-
-  // Add state update
-  let proposal = Proposal.load(event.params.proposalId.toString())
-  if (proposal) {
-    proposal.state = "Queued"
-    proposal.save()
-  }
-}
 
 export function handleProposalThresholdSet(
   event: ProposalThresholdSetEvent
@@ -238,68 +142,6 @@ export function handleUpgraded(event: UpgradedEvent): void {
   entity.save()
 }
 
-export function handleVoteCast(event: VoteCastEvent): void {
-  let entity = new VoteCast(
-    event.transaction.hash.concatI32(event.logIndex.toI32())
-  )
-  entity.voter = event.params.voter
-  entity.proposalId = event.params.proposalId
-  entity.support = event.params.support
-  entity.weight = event.params.weight
-  entity.reason = event.params.reason
-
-  entity.blockNumber = event.block.number
-  entity.blockTimestamp = event.block.timestamp
-  entity.transactionHash = event.transaction.hash
-
-  entity.save()
-
-  // Add new code for Vote entity and update Proposal
-  let voteId = event.params.proposalId.toString()
-    .concat("-")
-    .concat(event.params.voter.toHexString())
-
-  let vote = new Vote(voteId)
-  vote.proposal = event.params.proposalId.toString()
-  vote.voter = event.params.voter
-  vote.support = event.params.support
-  vote.weight = event.params.weight
-  vote.reason = event.params.reason
-  vote.timestamp = event.block.timestamp
-  vote.save()
-
-  // Update proposal vote counts
-  let proposal = Proposal.load(event.params.proposalId.toString())
-  if (proposal) {
-    if (event.params.support == 0) {
-      proposal.againstVotes = proposal.againstVotes.plus(event.params.weight)
-    } else if (event.params.support == 1) {
-      proposal.forVotes = proposal.forVotes.plus(event.params.weight)
-    } else if (event.params.support == 2) {
-      proposal.abstainVotes = proposal.abstainVotes.plus(event.params.weight)
-    }
-    proposal.save()
-  }
-}
-
-export function handleVoteCastWithParams(event: VoteCastWithParamsEvent): void {
-  let entity = new VoteCastWithParams(
-    event.transaction.hash.concatI32(event.logIndex.toI32())
-  )
-  entity.voter = event.params.voter
-  entity.proposalId = event.params.proposalId
-  entity.support = event.params.support
-  entity.weight = event.params.weight
-  entity.reason = event.params.reason
-  entity.params = event.params.params
-
-  entity.blockNumber = event.block.number
-  entity.blockTimestamp = event.block.timestamp
-  entity.transactionHash = event.transaction.hash
-
-  entity.save()
-}
-
 export function handleVotingDelaySet(event: VotingDelaySetEvent): void {
   let entity = new VotingDelaySet(
     event.transaction.hash.concatI32(event.logIndex.toI32())
@@ -326,4 +168,236 @@ export function handleVotingPeriodSet(event: VotingPeriodSetEvent): void {
   entity.transactionHash = event.transaction.hash
 
   entity.save()
+}
+
+// Helper to increment a counter
+function incrementCounter(counterId: string): void {
+  let counter = Counter.load(counterId);
+  if (!counter) {
+    counter = new Counter(counterId);
+    counter.count = 0;
+  }
+  counter.count += 1;
+  counter.save();
+}
+
+// Helper to ensure tracker exists and return it
+function getOrCreateTracker(): ActiveProposalTracker {
+  let tracker = ActiveProposalTracker.load("1");
+  if (!tracker) {
+    tracker = new ActiveProposalTracker("1");
+    tracker.activeProposals = [];
+    tracker.save();
+  }
+  return tracker;
+}
+
+// Helper to add a proposal to active tracking
+function addActiveProposal(proposalId: string): void {
+  let tracker = getOrCreateTracker();
+  let proposals = tracker.activeProposals;
+  proposals.push(proposalId);
+  tracker.activeProposals = proposals;
+  tracker.save();
+}
+
+// Helper to remove a proposal from active tracking
+function removeActiveProposal(proposalId: string): void {
+  let tracker = getOrCreateTracker();
+  let proposals = tracker.activeProposals;
+  let index = proposals.indexOf(proposalId);
+
+  if (index > -1) {
+    proposals.splice(index, 1);
+    tracker.activeProposals = proposals;
+    tracker.save();
+  }
+}
+
+export function handleProposalCreated(event: ProposalCreatedEvent): void {
+  // Create the proposal entity
+  let proposalId = event.params.proposalId.toString();
+  let proposal = new Proposal(proposalId);
+
+  proposal.proposalId = event.params.proposalId;
+  proposal.proposer = event.params.proposer;
+  proposal.targets = changetype<Bytes[]>(event.params.targets);
+  proposal.values = event.params.values;
+  proposal.signatures = event.params.signatures;
+  proposal.calldatas = event.params.calldatas;
+  proposal.voteStart = event.params.voteStart;
+  proposal.voteEnd = event.params.voteEnd;
+  proposal.description = event.params.description;
+  proposal.state = "Pending";
+  proposal.createdAt = event.block.timestamp;
+  proposal.forVotes = BigInt.fromI32(0);
+  proposal.againstVotes = BigInt.fromI32(0);
+  proposal.abstainVotes = BigInt.fromI32(0);
+
+  // Get quorum at creation time - this would ideally be a contract call
+  let contract = GovernorContract.bind(event.address);
+  let quorumAtCreation = contract.try_quorum(event.block.number);
+
+  if (!quorumAtCreation.reverted) {
+    proposal.quorumVotes = quorumAtCreation.value;
+  } else {
+    proposal.quorumVotes = BigInt.fromI32(0);
+  }
+
+  proposal.save();
+
+  // Add to active proposals tracker
+  addActiveProposal(proposalId);
+
+  // Increment proposals counter
+  incrementCounter("proposals");
+}
+
+export function handleProposalCanceled(event: ProposalCanceledEvent): void {
+  let proposalId = event.params.proposalId.toString();
+  let proposal = Proposal.load(proposalId);
+
+  if (proposal) {
+    proposal.state = "Canceled";
+    proposal.save();
+
+    // Remove from active tracking
+    removeActiveProposal(proposalId);
+  }
+}
+
+export function handleProposalExecuted(event: ProposalExecutedEvent): void {
+  let proposalId = event.params.proposalId.toString();
+  let proposal = Proposal.load(proposalId);
+
+  if (proposal) {
+    proposal.state = "Executed";
+    proposal.save();
+
+    // Remove from active tracking
+    removeActiveProposal(proposalId);
+  }
+}
+
+export function handleProposalQueued(event: ProposalQueuedEvent): void {
+  let proposalId = event.params.proposalId.toString();
+  let proposal = Proposal.load(proposalId);
+
+  if (proposal) {
+    proposal.state = "Queued";
+    proposal.save();
+  }
+}
+
+export function handleVoteCast(event: VoteCastEvent): void {
+  // Create vote entity
+  let voteId = event.params.proposalId.toString() + "-" + event.params.voter.toHexString();
+  let vote = new Vote(voteId);
+
+  vote.proposal = event.params.proposalId.toString();
+  vote.voter = event.params.voter;
+  vote.support = event.params.support;
+  vote.weight = event.params.weight;
+  vote.reason = event.params.reason;
+  vote.timestamp = event.block.timestamp;
+  vote.save();
+
+  // Update proposal vote counts
+  let proposalId = event.params.proposalId.toString();
+  let proposal = Proposal.load(proposalId);
+
+  if (proposal) {
+    if (event.params.support == 0) {
+      proposal.againstVotes = proposal.againstVotes.plus(event.params.weight);
+    } else if (event.params.support == 1) {
+      proposal.forVotes = proposal.forVotes.plus(event.params.weight);
+    } else if (event.params.support == 2) {
+      proposal.abstainVotes = proposal.abstainVotes.plus(event.params.weight);
+    }
+    proposal.save();
+  }
+
+  // Increment votes counter
+  incrementCounter("votes");
+}
+
+// Block handler to update time-based state transitions
+export function handleBlock(block: ethereum.Block): void {
+  let tracker = ActiveProposalTracker.load("1");
+  if (!tracker) return;
+
+  let proposalIds = tracker.activeProposals;
+  let governorAddress = "0x91a8E4a070b4BA4BF2E2a51CB42BDEdf8fFb9B5a"; // Your governor address
+  let governorContract = GovernorContract.bind(Address.fromString(governorAddress));
+
+  for (let i = 0; i < proposalIds.length; i++) {
+    let proposalId = proposalIds[i];
+    let proposal = Proposal.load(proposalId);
+
+    if (proposal) {
+      // Check current state from contract
+      let stateCall = governorContract.try_state(BigInt.fromString(proposalId));
+
+      if (!stateCall.reverted) {
+        let currentState = stateCall.value;
+        let stateStr: string;
+
+        // Map contract state enum to string
+        if (currentState == 0) stateStr = "Pending";
+        else if (currentState == 1) stateStr = "Active";
+        else if (currentState == 2) stateStr = "Canceled";
+        else if (currentState == 3) stateStr = "Defeated";
+        else if (currentState == 4) stateStr = "Succeeded";
+        else if (currentState == 5) stateStr = "Queued";
+        else if (currentState == 6) stateStr = "Expired";
+        else if (currentState == 7) stateStr = "Executed";
+        else stateStr = "Unknown";
+
+        // Only update if state has changed
+        if (proposal.state != stateStr) {
+          proposal.state = stateStr;
+          proposal.save();
+
+          // If terminal state, remove from active tracking
+          if (stateStr == "Canceled" || stateStr == "Defeated" ||
+            stateStr == "Executed" || stateStr == "Expired") {
+            removeActiveProposal(proposalId);
+          }
+        }
+      }
+    }
+  }
+}
+
+export function handleVoteCastWithParams(event: VoteCastWithParamsEvent): void {
+  // This event is similar to VoteCast but with additional params
+  // Create vote entity
+  let voteId = event.params.proposalId.toString() + "-" + event.params.voter.toHexString();
+  let vote = new Vote(voteId);
+
+  vote.proposal = event.params.proposalId.toString();
+  vote.voter = event.params.voter;
+  vote.support = event.params.support;
+  vote.weight = event.params.weight;
+  vote.reason = event.params.reason;
+  vote.timestamp = event.block.timestamp;
+  vote.save();
+
+  // Update proposal vote counts
+  let proposalId = event.params.proposalId.toString();
+  let proposal = Proposal.load(proposalId);
+
+  if (proposal) {
+    if (event.params.support == 0) {
+      proposal.againstVotes = proposal.againstVotes.plus(event.params.weight);
+    } else if (event.params.support == 1) {
+      proposal.forVotes = proposal.forVotes.plus(event.params.weight);
+    } else if (event.params.support == 2) {
+      proposal.abstainVotes = proposal.abstainVotes.plus(event.params.weight);
+    }
+    proposal.save();
+  }
+
+  // Increment votes counter
+  incrementCounter("votes");
 }

@@ -8,7 +8,7 @@ dataSources:
     name: GovernorRootstockCollective
     network: rootstock-testnet
     source:
-      address: "0x2109ff4A9D5548a21F877CA937ac5847fde49694"
+      address: "0xB1A39B8f57A55d1429324EEb1564122806eb297F"
       abi: GovernorRootstockCollective
       startBlock: 5582961
     mapping:
@@ -31,6 +31,10 @@ dataSources:
         - VoteCastWithParams
         - VotingDelaySet
         - VotingPeriodSet
+        - Proposal
+        - Vote
+        - ActiveProposalTracker
+        - Counter
       abis:
         - name: GovernorRootstockCollective
           file: ./abis/GovernorRootstockCollective.json
@@ -65,4 +69,6 @@ dataSources:
           handler: handleVotingDelaySet
         - event: VotingPeriodSet(uint256,uint256)
           handler: handleVotingPeriodSet
+      blockHandlers:
+        - handler: handleBlock
       file: ./src/governor-rootstock-collective.ts

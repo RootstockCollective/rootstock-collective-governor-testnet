@@ -142,6 +142,17 @@ type VotingPeriodSet @entity(immutable: true) {
   transactionHash: Bytes!
 }
 
+enum ProposalState {
+  Pending
+  Active
+  Canceled
+  Defeated
+  Succeeded
+  Queued
+  Expired
+  Executed
+}
+
 type Proposal @entity {
   id: ID!
   proposalId: BigInt!
@@ -159,25 +170,25 @@ type Proposal @entity {
   forVotes: BigInt!
   againstVotes: BigInt!
   abstainVotes: BigInt!
-}
-
-enum ProposalState {
-  Pending
-  Active
-  Canceled
-  Defeated
-  Succeeded
-  Queued
-  Expired
-  Executed
+  quorumVotes: BigInt! # Store the quorum needed at proposal creation
 }
 
 type Vote @entity {
-  id: ID!
+  id: ID! # proposalId-voterAddress
   proposal: Proposal!
   voter: Bytes!
-  support: Int!
+  support: Int! # 0 = Against, 1 = For, 2 = Abstain
   weight: BigInt!
   reason: String
   timestamp: BigInt!
+}
+
+type ActiveProposalTracker @entity {
+  id: ID! # Always "1"
+  activeProposals: [String!]! # Array of proposal IDs
+}
+
+type Counter @entity {
+  id: ID! # e.g., "proposals", "votes"
+  count: Int!
 }
