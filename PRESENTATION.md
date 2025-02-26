@@ -14,10 +14,11 @@ marp: true
 3. Anatomy of a Subgraph
 4. Rootstock Collective DAO Project
 5. Our Implementation
-6. Live Demo & Query Examples
+6. Advanced Features & Optimizations
 7. Extending The Graph: Proposal Metadata Storage
-8. Benefits & Results
-9. Next Steps
+8. Live Demo & Query Examples
+9. Benefits & Results
+10. Next Steps
 
 ---
 
@@ -34,8 +35,6 @@ marp: true
   - Limited (only basic lookups)
   - Resource-intensive
   - Slow for complex operations
-
----
 
 ### Core Value Proposition
 - Fast, reliable access to blockchain data
@@ -83,7 +82,7 @@ dataSources:
     name: GovernorContract
     network: rootstock-testnet
     source:
-      address: "0x91a8E4a070b4BA4BF2E2a51CB42BDEdf8fFb9B5a"
+      address: "0xB1A39B8f57A55d1429324EEb1564122806eb297F"
       abi: GovernorContract
     mapping:
       kind: ethereum/events
@@ -92,6 +91,8 @@ dataSources:
       eventHandlers:
         - event: ProposalCreated(...)
           handler: handleProposalCreated
+      blockHandlers:
+        - handler: handleBlock
 ```
 ---
 
@@ -112,24 +113,25 @@ type Vote @entity {
 
 ---
 
-## Rootstock Collective DAO Project
+## Rootstock Collective DAO Governor(Proposals Use Case)
 
-### Proposals Use case Overview
+### Project Overview
 - Governance tracking for DAO on Rootstock testnet
 - Need to efficiently query proposal and voting data
 - Real-time updates to frontend governance app
 
 ### Requirements
-- Track proposals and their lifecycle
+- Track proposals and their lifecycle states
 - Monitor vote counts and user voting history
 - Index governance parameter changes
-
+- Real-time state monitoring
 ---
 
 ### Technical Challenges
 - Aggregating vote counts from individual transactions
 - Tracking proposal states through multiple stage changes
 - Representing relationships between entities
+- Keeping states synchronized with blockchain
 
 ---
 
@@ -142,11 +144,17 @@ type Vote @entity {
 │ Proposal│◄──────┤  Vote   │
 │         │       │         │
 └─────────┘       └─────────┘
+     ▲
+     │
+     │
+┌────┴────┐
+│         │
+│ Counter │
+│         │
+└─────────┘
 ```
 ---
-
 ### Key Entities
----
 
 #### Proposal
 ```graphql
@@ -161,10 +169,21 @@ type Proposal @entity {
   forVotes: BigInt!
   againstVotes: BigInt!
   abstainVotes: BigInt!
+  quorumVotes: BigInt!
+}
+
+enum ProposalState {
+  Pending
+  Active
+  Canceled
+  Defeated
+  Succeeded
+  Queued
+  Expired
+  Executed
 }
 ```
 ---
-
 #### Vote
 ```graphql
 type Vote @entity {
@@ -175,6 +194,15 @@ type Vote @entity {
   weight: BigInt!
   reason: String
   timestamp: BigInt!
+}
+```
+---
+
+#### Counter
+```graphql
+type Counter @entity {
+  id: ID!
+  count: Int!
 }
 ```
 ---
@@ -192,40 +220,166 @@ export function handleProposalCreated(event: ProposalCreatedEvent): void {
   proposal.forVotes = BigInt.fromI32(0)
   proposal.againstVotes = BigInt.fromI32(0)
   proposal.abstainVotes = BigInt.fromI32(0)
+  
+  // Get quorum
+  let contract = GovernorContract.bind(event.address)
+  let quorumCall = contract.try_quorum(event.block.number)
+  if (!quorumCall.reverted) {
+    proposal.quorumVotes = quorumCall.value
+  } else {
+    proposal.quorumVotes = BigInt.fromI32(0)
+  }
+  
   proposal.save()
+  
+  // Track for state updates
+  addActiveProposal(proposal.id)
+  
+  // Update counter
+  incrementCounter("proposals")
+}
+```
+
+---
+
+## Advanced Features & Optimizations
+
+### Real-time State Tracking with Block Handlers
+
+```typescript
+export function handleBlock(block: ethereum.Block): void {
+  let tracker = ActiveProposalTracker.load("1")
+  if (!tracker) return
+  
+  let proposalIds = tracker.activeProposals
+  let governorContract = GovernorContract.bind(Address.fromString(
+    "0xB1A39B8f57A55d1429324EEb1564122806eb297F"
+  ))
+  
+  for (let i = 0; i < proposalIds.length; i++) {
+    let proposalId = proposalIds[i]
+    let proposal = Proposal.load(proposalId)
+    
+    if (proposal) {
+      // Check current state from contract
+      let stateCall = governorContract.try_state(
+        BigInt.fromString(proposalId)
+      )
+      
+      if (!stateCall.reverted) {
+        // Update proposal state when it changes
+        let newState = mapStateToString(stateCall.value)
+        if (proposal.state != newState) {
+          proposal.state = newState
+          proposal.save()
+        }
+      }
+    }
+  }
+}
+```
+---
+### Active Proposal Tracking
+
+```typescript
+// Tracking active proposals
+type ActiveProposalTracker @entity {
+  id: ID!
+  activeProposals: [String!]!
 }
 
-export function handleVoteCast(event: VoteCastEvent): void {
-  // Create vote entity
-  let voteId = event.params.proposalId.toString() + "-" + event.params.voter.toHexString()
-  let vote = new Vote(voteId)
-  vote.proposal = event.params.proposalId.toString()
-  vote.voter = event.params.voter
-  vote.support = event.params.support
-  vote.weight = event.params.weight
-  vote.reason = event.params.reason
-  vote.timestamp = event.block.timestamp
-  vote.save()
+function addActiveProposal(proposalId: string): void {
+  let tracker = getOrCreateTracker()
+  let proposals = tracker.activeProposals
+  proposals.push(proposalId)
+  tracker.activeProposals = proposals
+  tracker.save()
+}
 
-  // Update proposal vote counts
-  let proposal = Proposal.load(event.params.proposalId.toString())
-  if (proposal) {
-    if (event.params.support == 0) {
-      proposal.againstVotes = proposal.againstVotes.plus(event.params.weight)
-    } else if (event.params.support == 1) {
-      proposal.forVotes = proposal.forVotes.plus(event.params.weight)
-    } else if (event.params.support == 2) {
-      proposal.abstainVotes = proposal.abstainVotes.plus(event.params.weight)
-    }
-    proposal.save()
+function removeActiveProposal(proposalId: string): void {
+  // Remove from active tracking when in terminal state
+}
+```
+---
+### Efficient Counter Implementation
+
+```typescript
+// Helper to increment a counter
+function incrementCounter(counterId: string): void {
+  let counter = Counter.load(counterId)
+  if (!counter) {
+    counter = new Counter(counterId)
+    counter.count = 0
   }
+  counter.count += 1
+  counter.save()
+}
+```
+
+---
+
+## Extending The Graph: Proposal Metadata Storage
+
+### The Challenge
+- Need to store additional proposal metadata (Discourse forum links)
+- Data may expand in the future with more fields
+- Must be flexible and scalable
+
+### Architecture Options
+
+#### Option 1: On-chain Event + Graph Indexing
+<!-- ![On-chain Event Architecture](https://mermaid.ink/img/pako:eNqVkc1uwjAMx1_FygUJ0ApjF9qtBy6TJk3j0JsXu2mEmsSkCVPVd1-StSvbpEnLIbH_jj9_Oa44oVbcc9Z1rHVoO4M3AjIYpVy6juGN8TdQMjTGa7STw6DlxGGGxp-I2hL9_NXsoPwRWz4ycIPTc8qDK2d2TwGFNkC9PxL09bM4EXdx-OD3LrBLHZLMnRfz5cOj0eP6BQU2QKPtR7ys-cIHDxD_Y0vl6zx1iKaS5bzIXjqQb4S8Jn2ElOpnRuOLn4L14fh72NTZtnhjluVLTcJvyS7tAp1oQ_9gf8iDe9eXKHzCTl1F8LHZJiJn5ow3Tjtr0WXMGf4TLZSydxHDOW0zBl9pW7R8U_NFhU4Pm77fcqUz28D0n7f-qxsLJK7XC7QadR_lUdw?type=png) -->
+
+```solidity
+// In your Governor contract extension
+event ProposalMetadataSet(uint256 proposalId, string metadataURI);
+
+function setProposalMetadata(uint256 proposalId, string calldata metadataURI) external {
+    require(msg.sender == proposals[proposalId].proposer, "Not proposer");
+    emit ProposalMetadataSet(proposalId, metadataURI);
+}
+```
+
+```graphql
+type Proposal @entity {
+  id: ID!
+  # existing fields...
+  metadataURI: String
+  discourseUrl: String
+}
+```
+
+#### Option 2: IPFS + Graph Reference
+<!-- ![IPFS Architecture](https://mermaid.ink/img/pako:eNqVksFuwjAMhl_FygUJ0AK7ML0depi0SRuH3rzYTSPUJCYNQ1XfvaTdGBtIEx-S-Pf3_3bqiHuUgnvKXMuaFk1r8EzQHUaphLaluFb-CgoGjXmN9mZptJxxmKH2J6KXRH_9ejZQ_YgtHxkYw-kp5cGZM7svgULjoR_PhDZ8LF_CFGEuN3w7cCYXNzV5K7p-CHrlbZNyiDQdYk73vwV3ZNBKT9QPbyEzWDwt5nP4-MQoLtJHEFhDM+yGdF3xnQ_uYf6HL5Wvy5TnOWOW7tH4crvT4qFT0ib3sCR9hpTqlRm6F-h38HE-pzflOyqfV2fpbG1D_1B_CUKcuw-jKqAT7hA-NedE5KwZadppa1vQGXWG_0RjpayrCGdpkVH4Slui5Vedr4T2I_TjEChnimFmcf2fDVLJtUy71aFV_LxxqA7qDyNsxsY?type=png) -->
+
+```typescript
+// In your frontend
+async function getProposalWithMetadata(proposalId) {
+  // Query your subgraph
+  const { proposal } = await request(SUBGRAPH_URL, `{
+    proposal(id: "${proposalId}") {
+      id
+      description
+      metadataURI
+    }
+  }`);
+  
+  // If there's a metadataURI, fetch the data
+  if (proposal.metadataURI) {
+    const metadata = await fetch(proposal.metadataURI).then(r => r.json());
+    return {
+      ...proposal,
+      discourseUrl: metadata.discourseUrl
+    };
+  }
+  
+  return proposal;
 }
 ```
 
 ---
 
 ## Live Demo & Query Examples
----
 
 ### Getting Recent Proposals
 ```graphql
@@ -241,7 +395,28 @@ export function handleVoteCast(event: VoteCastEvent): void {
 }
 ```
 ---
-
+### Total Count of Proposals
+```graphql
+{
+  counter(id: "proposals") {
+    count
+  }
+}
+```
+---
+### Active Proposals
+```graphql
+{
+  proposals(where: { state: Active }) {
+    id
+    description
+    voteEnd
+    forVotes
+    againstVotes
+  }
+}
+```
+---
 ### Checking User Voting History
 ```graphql
 {
@@ -257,143 +432,25 @@ export function handleVoteCast(event: VoteCastEvent): void {
 }
 ```
 ---
-
-### Active Proposals
-```graphql
-{
-  proposals(where: { state: Active }) {
-    id
-    description
-    voteEnd
-    forVotes
-    againstVotes
-  }
-}
-```
----
-
 ### Integration Code Example
 ```javascript
-async function getProposals() {
-  const QUERY = `{
-    proposals(first: 10, orderBy: createdAt, orderDirection: desc) {
-      id
-      description
-      state
-      forVotes
-      againstVotes
+import { request, gql } from 'graphql-request';
+
+async function fetchProposals() {
+  const QUERY = gql`
+    {
+      proposals(first: 10, orderBy: createdAt, orderDirection: desc) {
+        id
+        description
+        state
+        forVotes
+        againstVotes
+      }
     }
-  }`;
+  `;
 
   const data = await request(SUBGRAPH_URL, QUERY);
   return data.proposals;
-}
-```
-
----
-
-## Extending The Graph: Proposal Metadata Storage
-
-### The Challenge
-- Need to store additional proposal metadata (Discourse forum links)
-- Data may expand in the future with more fields
-- Need a flexible, scalable solution
-
----
-
-### Architecture Options
-
----
-
-#### Option 1: On-chain Event + Graph Indexing
-<!-- ![On-chain Event Architecture](https://mermaid.ink/img/pako:eNqVkc1uwjAMx1_FygUJ0ApjF9qtBy6TJk3j0JsXu2mEmsSkCVPVd1-StSvbpEnLIbH_jj9_Oa04oVbcc9Z1rHVoO4M3AjIYpVy6juGN8TdQMjTGa7STw6DlxGGGxp-I2hL9_NXsoPwRWz4ycIPTc8qDK2d2TwGFNkC9PxL09bM4EXdx-OD3LrBLHZLMnRfz5cOj0eP6BQU2QKPtR7ys-cIHDxD_Y0vl6zx1iKaS5bzIXjqQb4S8Jn2ElOpnRuOLn4L14fh72NTZtnhjluVLTcJvyS7tAp1oQ_9gf8iDe9eXKHzCTl1F8LHZJiJn5ow3Tjtr0WXMGf4TLZSydxHDOW0zBl9pW7R8U_NFhU4Pm77fcqUz28D0n7f-qxsLJK7XC7QadR_lUdw?type=png) -->
-
-1. Emit events with metadata references
-```solidity
-event ProposalMetadataSet(uint256 proposalId, string metadataURI);
-```
----
-
-2. Update schema
-```graphql
-type Proposal @entity {
-  id: ID!
-  # existing fields
-  metadataURI: String
-  discourseUrl: String
-}
-```
----
-
-3. Add handler
-```typescript
-export function handleProposalMetadataSet(event: ProposalMetadataSetEvent): void {
-  let proposal = Proposal.load(event.params.proposalId.toString());
-  if (proposal) {
-    proposal.metadataURI = event.params.metadataURI;
-    proposal.save();
-  }
-}
-```
----
-
-#### Option 2: IPFS + Graph Reference
-<!-- ![IPFS Architecture](https://mermaid.ink/img/pako:eNqVksFuwjAMhl_FygUJ0AK7ML0depi0SRuH3rzYTSPUJCYNQ1XfvaTdGBtIEx-S-Pf3_3bqiHuUgnvKXMuaFk1r8EzQHUaphLaluFb-CgoGjXmN9mZptJxxmKH2J6KXRH_9ejZQ_YgtHxkYw-kp5cGZM7svgULjoR_PhDZ8LF_CFGEuN3w7cCYXNzV5K7p-CHrlbZNyiDQdYk73vwV3ZNBKT9QPbyEzWDwt5nP4-MQoLtJHEFhDM-yGdF3xnQ_uYf6HL5Wvy5TnOWOW7tH4crvT4qFT0ib3sCR9hpTqlRm6F-h38HE-pzflOyqfV2fpbG1D_1B_CUKcuw-jKqAT7hA-NedE5KwZadppa1vQGXWG_0RjpayrCGdpkVH4Slui5Vedr4T2I_TjEChnimFmcf2fDVLJtUy71aFV_LxxqA7qDyNsxsY?type=png) -->
----
-
-```typescript
-// In the dApp
-async function getProposalWithMetadata(proposalId) {
-  // Query subgraph for the basic proposal
-  const { proposal } = await request(SUBGRAPH_URL, `{
-    proposal(id: "${proposalId}") {
-      id
-      description
-      metadataURI
-    }
-  }`);
-  
-  // If there's a metadataURI, fetch the additional data
-  if (proposal.metadataURI) {
-    const metadata = await fetch(proposal.metadataURI).then(r => r.json());
-    return {
-      ...proposal,
-      discourseUrl: metadata.discourseUrl,
-      // other metadata fields...
-    };
-  }
-  
-  return proposal;
-}
-```
----
-
-#### Possible Implementation Extension: Flexible Schema Approach
-```graphql
-type Proposal @entity {
-  id: ID!
-  # existing fields...
-  metadata: [MetadataField!] @derivedFrom(field: "proposal")
-}
-
-type MetadataField @entity {
-  id: ID!
-  proposal: Proposal!
-  key: String!
-  value: String!
-}
-```
----
-
-```typescript
-export function handleProposalMetadataSet(event: ProposalMetadataSetEvent): void {
-  // Create metadata field
-  let fieldId = event.params.proposalId.toString() + "-discourse";
-  let field = new MetadataField(fieldId);
-  field.proposal = event.params.proposalId.toString();
-  field.key = "discourseUrl";
-  field.value = event.params.url;
-  field.save();
 }
 ```
 
@@ -405,38 +462,47 @@ export function handleProposalMetadataSet(event: ProposalMetadataSetEvent): void
 - No need for custom indexing infrastructure
 - Simple GraphQL queries vs complex RPC calls
 - Automatic updates when new events occur
----
 
 ### User Experience
-- ~10x faster data loading
+- ~10x faster data loading than direct RPC calls
 - Complex filters and sorting
-- Simplified frontend code
+- Real-time state updates
 ---
-
 ### Maintenance
 - Subgraph updates independent of frontend
 - Scalable with growing usage
 - No database management
+- Automatic state synchronization
+---
+### Comparison to Traditional Alternatives
+| Feature | The Graph | Custom DB | Direct RPC |
+|---------|-----------|-----------|------------|
+| Setup Complexity | Medium | High | Low |
+| Query Speed | Fast | Fast | Slow |
+| Decentralization | High | None | Medium |
+| Maintenance | Low | High | Low |
+| Complex Queries | Yes | Yes | Limited |
+| State Consistency | Automatic | Manual | Manual |
 
 ---
 
 ## Next Steps
 
+### Planned Improvements
+- Add delegation tracking for voting power
+- Implement proposal execution monitoring
+- Create analytics entities for governance metrics
+---
 ### Potential Extensions
 - Cross-chain governance monitoring
-- Historical voting power snapshots*
+- Historical voting power snapshots
 - Dynamic metadata resolution
-- Add delegation tracking for voting power
-- Create analytics entities for governance metrics
-
----
 
 ### Integration with Other Systems
-- Notification systems**
+- Frontend voting dashboard
+- Notification systems
 - Governance analytics
 
 ---
 
 ## Thank You!
-
-**Questions?**
